@@ -2,23 +2,132 @@ import { Fragment, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import {
-  TRIGGER_LABELS, dateOnly, dateTime, dateTimeSec, liveStatus, money, usePolling, useServerNow,
+  TRIGGER, clock, dateOnly, feedTime, hhmm, hhmmss, inWindow, liveStatus, money, usePolling, useServerNow,
 } from '../utils.js';
 import StatusBadge from '../components/StatusBadge.jsx';
-import Countdown from '../components/Countdown.jsx';
 import BidForm from '../components/BidForm.jsx';
+import { FeedIcon } from '../components/Icons.jsx';
 
-const EVENT_META = {
-  RFQ_CREATED: { icon: '📄', label: 'RFQ created' },
-  BID_SUBMITTED: { icon: '💰', label: 'Bid submitted' },
-  TIME_EXTENDED: { icon: '⏱️', label: 'Time extended' },
-};
+const MIN = 60000;
+const pct = (v) => `${Math.max(0, Math.min(100, v)).toFixed(2)}%`;
+const longDate = (v) =>
+  new Date(`${String(v).slice(0, 10)}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+function ClockBox({ rfq, status, now }) {
+  const start = new Date(rfq.bid_start_at).getTime();
+  const close = new Date(rfq.current_bid_close_at).getTime();
+  const forced = new Date(rfq.forced_bid_close_at).getTime();
+  const X = rfq.trigger_window_minutes;
+  const Y = rfq.extension_minutes;
+
+  if (status === 'UPCOMING') {
+    return (
+      <div className="clock-box">
+        <span className="clock-label">Opens in</span>
+        <span role="timer" className="clock">{clock(start - now)}</span>
+        <span className="clock-note">Bidding starts at {hhmm(start)}</span>
+      </div>
+    );
+  }
+  if (status !== 'ACTIVE') {
+    return (
+      <div className="clock-box ended">
+        <span className="clock-label">{status === 'FORCE_CLOSED' ? 'Force closed at' : 'Closed at'}</span>
+        <span className="clock">{hhmm(close)}</span>
+        <span className="clock-note">{status === 'FORCE_CLOSED' ? 'Reached the hard stop. No more bids accepted.' : 'Bidding is over. No more bids accepted.'}</span>
+      </div>
+    );
+  }
+  const hot = inWindow(rfq, now);
+  const atCap = close >= forced;
+  const what = { BID_RECEIVED: 'a new bid', ANY_RANK_CHANGE: 'a rank change', L1_RANK_CHANGE: 'a new L1' }[rfq.extension_trigger];
+  return (
+    <div className={`clock-box${hot ? ' hot' : ''}`}>
+      <span className="clock-label">Closes in</span>
+      <span role="timer" aria-live="off" className="clock">{clock(close - now)}</span>
+      <span className="clock-note">
+        {atCap ? 'At the forced close: no more extensions possible'
+          : hot ? `Inside trigger window: ${what} pushes close by ${Y} min`
+            : `Trigger window opens at ${hhmm(close - X * MIN)}`}
+      </span>
+    </div>
+  );
+}
+
+function WindowTimeline({ rfq, status, now }) {
+  const start = new Date(rfq.bid_start_at).getTime();
+  const orig = new Date(rfq.original_bid_close_at).getTime();
+  const close = new Date(rfq.current_bid_close_at).getTime();
+  const forced = new Date(rfq.forced_bid_close_at).getTime();
+  const span = forced - start;
+  const at = (t) => ((t - start) / span) * 100;
+  const winStart = Math.max(start, close - rfq.trigger_window_minutes * MIN);
+  const extEnd = Math.min(forced, close + rfq.extension_minutes * MIN);
+  const extendedMin = Math.round((close - orig) / MIN);
+  const headroom = Math.round((forced - close) / MIN);
+  const showNow = now >= start && now <= forced;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="tl-head">
+        <h2 className="h2-sm">Auction window</h2>
+        <span className="sub">
+          {status === 'ACTIVE' || status === 'UPCOMING'
+            ? headroom > 0 ? `${headroom} min of headroom left before the forced close` : 'No headroom left: close equals forced close'
+            : `Ran ${Math.round((close - start) / MIN)} min${extendedMin ? `, including ${extendedMin} min of extensions` : ''}`}
+        </span>
+      </div>
+      <div className="tl" aria-hidden="true">
+        <div className="tl-track" />
+        <div className="tl-elapsed" style={{ width: pct(at(Math.min(now, close))) }} />
+        <div className="tl-window" style={{ left: pct(at(winStart)), width: `calc(${pct(at(close))} - ${pct(at(winStart))})` }} />
+        {status === 'ACTIVE' && extEnd > close && (
+          <div className="tl-ext" style={{ left: pct(at(close)), width: `calc(${pct(at(extEnd))} - ${pct(at(close))})` }} />
+        )}
+        {extendedMin > 0 && <div className="tl-orig" style={{ left: pct(at(orig)) }} />}
+        <div className="tl-close" style={{ left: pct(at(close)) }} />
+        <div className="tl-forced" />
+        {showNow && <div className="tl-now" style={{ left: pct(at(now)) }} />}
+        {showNow && <span className="tl-now-label" style={{ left: pct(at(now)) }}>NOW</span>}
+      </div>
+      <div className="tl-legend">
+        <div><div className="muted">Bid start</div><div className="v">{hhmm(start)}</div></div>
+        <div><div className="muted">Original close</div><div className={`v${extendedMin ? ' strike' : ''}`}>{hhmm(orig)}</div></div>
+        <div>
+          <div className="amber">Current close</div>
+          <div className="v amber" style={{ fontWeight: 700 }}>
+            {hhmm(close)}{extendedMin > 0 && <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 12 }}> (+{extendedMin} min)</span>}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="red">Forced close · hard stop</div>
+          <div className="v red" style={{ fontWeight: 700 }}>{hhmm(forced)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function feedMessage(a) {
+  const m = a.metadata || {};
+  if (a.event_type === 'TIME_EXTENDED') return `${m.reason || a.message}.`;
+  if (a.event_type === 'BID_SUBMITTED' && m.total_amount !== undefined) {
+    return [m.carrier, money(m.total_amount), m.rank && `ranked ${m.rank}`].filter(Boolean).join(' · ');
+  }
+  return a.message;
+}
+
+function feedTitle(a) {
+  if (a.event_type === 'BID_SUBMITTED') return a.metadata?.supplier ? `Bid · ${a.metadata.supplier}` : 'Bid submitted';
+  if (a.event_type === 'TIME_EXTENDED') return 'Time extended';
+  return 'RFQ created';
+}
 
 export default function AuctionDetails() {
   const { id } = useParams();
   const [rfq, setRfq] = useState(null);
   const [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(null);
+  const [open, setOpen] = useState(null);
   const now = useServerNow(rfq?.server_time);
 
   usePolling(async () => {
@@ -30,152 +139,217 @@ export default function AuctionDetails() {
     }
   }, 3000);
 
-  if (error && !rfq) return <div className="alert alert-error">{error} <Link to="/">Back to auctions</Link></div>;
-  if (!rfq) return <p className="muted">Loading…</p>;
+  if (!rfq) {
+    return (
+      <main className="page">
+        {error ? <div className="alert alert-error" role="alert">{error}. <Link to="/">Back to auctions</Link></div> : <p className="muted">Loading…</p>}
+      </main>
+    );
+  }
 
   const status = liveStatus(rfq, now);
-  const extendedMin = Math.round(
-    (new Date(rfq.current_bid_close_at) - new Date(rfq.original_bid_close_at)) / 60000
-  );
+  const trig = TRIGGER[rfq.extension_trigger];
+  const close = new Date(rfq.current_bid_close_at).getTime();
+  const forced = new Date(rfq.forced_bid_close_at).getTime();
+  const capped = rfq.extension_count > 0 && close >= forced;
+  const extendedMin = Math.round((close - new Date(rfq.original_bid_close_at).getTime()) / MIN);
+  const firstBid = rfq.bids[rfq.bids.length - 1];
+  const drop = firstBid && rfq.lowest_bid !== null ? (firstBid.total_amount - rfq.lowest_bid) / firstBid.total_amount : null;
+  const l1 = rfq.rankings[0];
 
   return (
-    <section>
-      <Link to="/" className="back">← All auctions</Link>
-      <div className="page-head">
-        <div>
-          <h1>{rfq.name}</h1>
-          <p className="muted">{rfq.reference_id} · Pickup {dateOnly(rfq.pickup_date)}</p>
-        </div>
-        <div className="head-right">
-          <StatusBadge status={status} />
-          <div className="big-countdown"><Countdown rfq={rfq} now={now} /></div>
-        </div>
-      </div>
-      {error && <div className="alert alert-error">{error}</div>}
+    <main className="page">
+      <nav className="crumbs" aria-label="Breadcrumb">
+        <Link to="/">Auctions</Link><span aria-hidden="true">/</span>
+        <span className="cur ref">{rfq.reference_id}</span>
+      </nav>
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
 
-      <div className="stats">
-        <div className="stat"><span className="muted">Current lowest bid</span><b>{money(rfq.lowest_bid)}</b>
-          {rfq.rankings[0] && <span className="small">L1: {rfq.rankings[0].supplier_name}</span>}</div>
-        <div className="stat"><span className="muted">Bid start</span><b>{dateTime(rfq.bid_start_at)}</b></div>
-        <div className="stat"><span className="muted">Current bid close</span><b>{dateTime(rfq.current_bid_close_at)}</b>
-          <span className="small">{rfq.extension_count > 0
-            ? `Originally ${dateTime(rfq.original_bid_close_at)} (+${extendedMin} min, ${rfq.extension_count}×)`
-            : 'Not extended'}</span></div>
-        <div className="stat"><span className="muted">Forced close</span><b>{dateTime(rfq.forced_bid_close_at)}</b>
-          <span className="small">Hard stop</span></div>
-      </div>
-
-      <div className="layout">
-        <div className="col-main">
-          <div className="card">
-            <div className="row-between">
-              <h2>Supplier rankings</h2>
-              <span className="muted small">Latest bid per supplier, sorted by total price</span>
+      <section className="card hero">
+        <div className="hero-top">
+          <div className="hero-title">
+            <div className="chips">
+              <StatusBadge status={status} />
+              {rfq.extension_count > 0 && (
+                <span className="badge badge-info">Extended ×{rfq.extension_count}{capped ? ' · capped' : ''}</span>
+              )}
             </div>
-            {rfq.rankings.length === 0 ? <p className="muted">No bids yet.</p> : (
-              <div className="table-wrap">
-                <table className="table">
+            <h1>{rfq.name}</h1>
+            <p style={{ margin: 0, fontSize: 14, color: 'var(--muted)' }}>
+              <span className="ref">{rfq.reference_id}</span> · Pickup {longDate(rfq.pickup_date)} ·
+              Trigger: {trig.key === 'L1_RANK_CHANGE' ? trig.short : trig.short.toLowerCase()} in last {rfq.trigger_window_minutes} min
+            </p>
+          </div>
+          <ClockBox rfq={rfq} status={status} now={now} />
+        </div>
+        <WindowTimeline rfq={rfq} status={status} now={now} />
+      </section>
+
+      <div className="kpis">
+        <div className="kpi">
+          <div className="kpi-label">Current lowest bid</div>
+          <div className="kpi-value">{money(rfq.lowest_bid)}</div>
+          <div className="kpi-foot" style={l1 ? { color: 'var(--green)', fontWeight: 500 } : undefined}>
+            {l1 ? `L1 · ${l1.supplier_name}` : 'No bids yet'}
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Price drop since first bid</div>
+          <div className="kpi-value">{drop === null ? '—' : drop > 0 ? `−${(drop * 100).toFixed(1)}%` : '0%'}</div>
+          <div className="kpi-foot">{firstBid ? `${money(firstBid.total_amount)} → ${money(rfq.lowest_bid)}` : 'Waiting for the first bid'}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Bids received</div>
+          <div className="kpi-value">{rfq.bids.length}</div>
+          <div className="kpi-foot">from {rfq.rankings.length} supplier{rfq.rankings.length === 1 ? '' : 's'}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Extensions</div>
+          <div className="kpi-value">{rfq.extension_count} <small>/ +{extendedMin} min</small></div>
+          <div className="kpi-foot">{Math.max(0, Math.round((forced - close) / MIN))} min headroom to forced close</div>
+        </div>
+      </div>
+
+      <div className="split">
+        <div className="split-main">
+          <section className="card" style={{ overflow: 'hidden' }}>
+            <div className="card-head">
+              <div>
+                <h2>Supplier rankings</h2>
+                <p className="sub">Latest bid per supplier, lowest total first</p>
+              </div>
+            </div>
+            {rfq.rankings.length === 0 ? (
+              <div className="empty">No bids yet.</div>
+            ) : (
+              <div className="table-scroll">
+                <table className="table ranks">
                   <thead>
                     <tr>
-                      <th>Rank</th><th>Supplier / Carrier</th>
-                      <th className="num">Freight</th><th className="num">Origin</th><th className="num">Destination</th>
-                      <th className="num">Total</th><th>Transit</th><th>Valid until</th><th></th>
+                      <th scope="col">Rank</th>
+                      <th scope="col">Supplier</th>
+                      <th scope="col" className="r">Freight</th>
+                      <th scope="col" className="r">Origin</th>
+                      <th scope="col" className="r">Dest.</th>
+                      <th scope="col" className="r">Total</th>
+                      <th scope="col">Transit</th>
+                      <th scope="col" className="r">History</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rfq.rankings.map((r) => (
-                      <Fragment key={r.supplier_id}>
-                        <tr className={r.rank === 1 ? 'l1' : ''}>
-                          <td><span className={`rank rank-${Math.min(r.rank, 4)}`}>{r.rank_label}</span></td>
-                          <td><div className="strong">{r.supplier_name}</div><div className="muted small">{r.carrier_name}</div></td>
-                          <td className="num">{money(r.freight_charges)}</td>
-                          <td className="num">{money(r.origin_charges)}</td>
-                          <td className="num">{money(r.destination_charges)}</td>
-                          <td className="num strong">{money(r.total_amount)}</td>
-                          <td>{r.transit_time_days} d</td>
-                          <td className="nowrap">{dateOnly(r.quote_validity_date)}</td>
-                          <td>
-                            <button className="link" onClick={() => setExpanded(expanded === r.supplier_id ? null : r.supplier_id)}>
-                              {r.revisions} bid{r.revisions > 1 ? 's' : ''} {expanded === r.supplier_id ? '▲' : '▼'}
-                            </button>
-                          </td>
-                        </tr>
-                        {expanded === r.supplier_id && (
-                          <tr className="sub">
-                            <td colSpan={9}>
-                              <b>Bid history: {r.supplier_name}</b>
-                              <ul className="history">
-                                {rfq.bids.filter((b) => b.supplier_id === r.supplier_id).map((b) => (
-                                  <li key={b.id}>
-                                    {dateTimeSec(b.created_at)}: <b>{money(b.total_amount)}</b>
-                                    {' '}(freight {money(b.freight_charges)}, origin {money(b.origin_charges)},
-                                    {' '}destination {money(b.destination_charges)}; {b.carrier_name}; {b.transit_time_days} d;
-                                    {' '}valid until {dateOnly(b.quote_validity_date)})
-                                  </li>
-                                ))}
-                              </ul>
+                    {rfq.rankings.map((r) => {
+                      const isOpen = open === r.supplier_id;
+                      return (
+                        <Fragment key={r.supplier_id}>
+                          <tr className={r.rank === 1 ? 'l1' : ''}>
+                            <td><span className={`rank-chip${r.rank === 1 ? ' l1' : ''}`}>{r.rank_label}</span></td>
+                            <td>
+                              <div style={{ fontWeight: 600 }}>{r.supplier_name}</div>
+                              <div className="cell-sub" style={{ marginTop: 2 }}>{r.carrier_name} · valid to {dateOnly(r.quote_validity_date)}</div>
+                            </td>
+                            <td className="num">{money(r.freight_charges)}</td>
+                            <td className="num">{money(r.origin_charges)}</td>
+                            <td className="num">{money(r.destination_charges)}</td>
+                            <td className="num total">{money(r.total_amount)}</td>
+                            <td style={{ whiteSpace: 'nowrap' }}>{r.transit_time_days} day{r.transit_time_days === 1 ? '' : 's'}</td>
+                            <td className="r">
+                              <button type="button" className="ghost" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : r.supplier_id)}>
+                                {r.revisions} bid{r.revisions === 1 ? '' : 's'} <span aria-hidden="true">{isOpen ? '▴' : '▾'}</span>
+                              </button>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    ))}
+                          {isOpen && (
+                            <tr className="history">
+                              <td colSpan={8}>
+                                <ol className="hist">
+                                  {rfq.bids.filter((b) => b.supplier_id === r.supplier_id).map((b) => (
+                                    <li key={b.id}>
+                                      <span className="mono muted">{hhmmss(b.created_at)}</span>
+                                      <span className="mono" style={{ fontWeight: 700, color: 'var(--text)' }}>{money(b.total_amount)}</span>
+                                      <span>
+                                        Freight {money(b.freight_charges)} · origin {money(b.origin_charges)} · dest. {money(b.destination_charges)} ·{' '}
+                                        {b.carrier_name} · {b.transit_time_days} d · valid to {dateOnly(b.quote_validity_date)}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ol>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
+          </section>
 
           {status === 'ACTIVE' ? (
-            <BidForm rfqId={rfq.id} onSubmitted={setRfq} />
+            <BidForm rfq={rfq} now={now} onSubmitted={setRfq} />
           ) : (
-            <div className="card closed-note">
-              <h2>{status === 'UPCOMING' ? 'Bidding has not started' : 'Bidding closed'}</h2>
-              <p className="muted">
-                {status === 'UPCOMING'
-                  ? `Quotes can be submitted from ${dateTime(rfq.bid_start_at)}.`
-                  : status === 'FORCE_CLOSED'
-                    ? 'This auction reached its forced close time. No more bids are accepted.'
-                    : `This auction closed at ${dateTime(rfq.current_bid_close_at)}.`}
-                {status !== 'UPCOMING' && rfq.rankings[0] && ` Winning quote (L1): ${rfq.rankings[0].supplier_name}, ${money(rfq.rankings[0].total_amount)}.`}
-              </p>
-            </div>
+            <section className="card pad">
+              <div>
+                <h2>{status === 'UPCOMING' ? 'Bidding has not started' : 'Bidding closed'}</h2>
+                <p className="sub" style={{ marginTop: 6, fontSize: 14 }}>
+                  {status === 'UPCOMING'
+                    ? `Quotes can be submitted from ${hhmm(rfq.bid_start_at)} on ${dateOnly(rfq.bid_start_at)}.`
+                    : status === 'FORCE_CLOSED'
+                      ? 'This auction reached its forced close time. No more bids are accepted.'
+                      : `This auction closed at ${hhmm(close)}. No more bids are accepted.`}
+                  {status !== 'UPCOMING' && l1 && <> Winning quote (L1): <b>{l1.supplier_name}</b>, <b className="mono">{money(l1.total_amount)}</b>.</>}
+                </p>
+              </div>
+            </section>
           )}
         </div>
 
-        <aside className="col-side">
-          <div className="card">
-            <h2>Auction configuration</h2>
-            <dl className="config">
-              <dt>Trigger window (X)</dt><dd>{rfq.trigger_window_minutes} min</dd>
-              <dt>Extension duration (Y)</dt><dd>{rfq.extension_minutes} min</dd>
-              <dt>Extension trigger</dt><dd>{TRIGGER_LABELS[rfq.extension_trigger]}</dd>
-              <dt>Extensions so far</dt><dd>{rfq.extension_count}</dd>
+        <aside className="split-side">
+          <section className="card pad-sm">
+            <h2 className="h2-sm" style={{ marginBottom: 14 }}>Auction rules</h2>
+            <dl className="dl">
+              <dt>Trigger window (X)</dt><dd className="mono">{rfq.trigger_window_minutes} min</dd>
+              <dt>Extension (Y)</dt><dd className="mono">+{rfq.extension_minutes} min</dd>
+              <dt>Trigger</dt><dd>{trig.short}</dd>
+              <dt>Forced close</dt><dd className="mono" style={{ color: 'var(--red)' }}>{hhmm(forced)}</dd>
             </dl>
-          </div>
+            <p className="rule-note">
+              If {trig.phrase} in the last {rfq.trigger_window_minutes} minutes, the close moves {rfq.extension_minutes} minutes later, never past {hhmm(forced)}.
+            </p>
+          </section>
 
-          <div className="card">
-            <h2>Activity log</h2>
-            <ol className="timeline">
+          <section className="card pad-sm">
+            <h2 className="h2-sm" style={{ marginBottom: 16 }}>Activity</h2>
+            <ol className="feed">
               {rfq.activity.map((a) => (
-                <li key={a.id} className={`ev ev-${a.event_type.toLowerCase()}`}>
-                  <div className="ev-head">
-                    <span>{EVENT_META[a.event_type]?.icon} {EVENT_META[a.event_type]?.label || a.event_type}</span>
-                    <time>{dateTimeSec(a.created_at)}</time>
+                <li key={a.id}>
+                  <div className="feed-rail">
+                    <span className={`feed-dot ${a.event_type === 'TIME_EXTENDED' ? 'ext' : a.event_type === 'BID_SUBMITTED' ? 'bid' : 'doc'}`}>
+                      <FeedIcon type={a.event_type} />
+                    </span>
+                    <span className="feed-line" />
                   </div>
-                  <div className="ev-msg">{a.message}</div>
-                  {a.event_type === 'TIME_EXTENDED' && (
-                    <div className="ev-detail">
-                      <div><b>Reason:</b> {a.metadata.reason}</div>
-                      <div>{dateTime(a.metadata.previous_close_at)} → <b>{dateTime(a.metadata.new_close_at)}</b>
-                        {a.metadata.capped_at_forced_close && <span className="badge badge-force_closed">capped</span>}</div>
+                  <div className="feed-body">
+                    <div className="feed-top">
+                      <span className="feed-title">{feedTitle(a)}</span>
+                      <time className="feed-time" dateTime={a.created_at}>{feedTime(a.created_at)}</time>
                     </div>
-                  )}
+                    <div className="feed-msg">
+                      {feedMessage(a)}
+                    </div>
+                    {a.event_type === 'TIME_EXTENDED' && a.metadata?.new_close_at && (
+                      <div className="feed-ext">
+                        <span className="mono">{hhmm(a.metadata.previous_close_at)}</span> → <b className="mono">{hhmm(a.metadata.new_close_at)}</b>
+                        {a.metadata.capped_at_forced_close && <span style={{ fontWeight: 600 }}> · capped at forced close</span>}
+                      </div>
+                    )}
+                  </div>
                 </li>
               ))}
             </ol>
-          </div>
+          </section>
         </aside>
       </div>
-    </section>
+    </main>
   );
 }

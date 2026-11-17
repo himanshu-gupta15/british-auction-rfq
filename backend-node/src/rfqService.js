@@ -29,10 +29,11 @@ async function listRfqs() {
             (SELECT MIN(total_amount) FROM rfq_live_rankings r WHERE r.rfq_id = q.id) AS lowest_bid,
             (SELECT supplier_name FROM rfq_live_rankings r WHERE r.rfq_id = q.id AND r.rank = 1) AS l1_supplier,
             (SELECT COUNT(*)::int FROM bids b WHERE b.rfq_id = q.id) AS bid_count,
-            (SELECT COUNT(DISTINCT supplier_id)::int FROM bids b WHERE b.rfq_id = q.id) AS supplier_count
+            (SELECT COUNT(DISTINCT supplier_id)::int FROM bids b WHERE b.rfq_id = q.id) AS supplier_count,
+            (SELECT COUNT(*)::int FROM bids b WHERE b.rfq_id = q.id AND b.created_at > now() - interval '1 hour') AS bids_last_hour
        FROM rfqs q
       WHERE q.is_british_auction
-      ORDER BY q.created_at DESC`
+      ORDER BY q.created_at DESC, q.id ASC`
   );
   const now = new Date();
   return { server_time: now, items: rows.map((r) => withStatus(r, now)) };
@@ -164,7 +165,7 @@ async function submitBid(rfqId, body) {
       [
         rfq.id,
         `${supplier.name} (${bid.carrier_name}) bid ${bid.total_amount.toFixed(2)} → ranked ${myRank.rank_label}`,
-        { bid_id: bid.id, supplier: supplier.name, total_amount: bid.total_amount, rank: myRank.rank_label },
+        { bid_id: bid.id, supplier: supplier.name, carrier: bid.carrier_name, total_amount: bid.total_amount, rank: myRank.rank_label },
         now,
       ]
     );

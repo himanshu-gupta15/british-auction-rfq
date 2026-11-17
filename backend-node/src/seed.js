@@ -27,7 +27,8 @@ async function bid(c, rfqId, supplier, carrier, freight, origin, dest, at) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING total_amount`,
     [rfqId, rows[0].id, carrier, freight, origin, dest, 3 + Math.floor(Math.random() * 4), '2027-01-31', at]);
   await c.query(`INSERT INTO activity_logs (rfq_id, event_type, message, metadata, created_at) VALUES ($1,'BID_SUBMITTED',$2,$3,$4)`,
-    [rfqId, `${supplier} (${carrier}) bid ${Number(b[0].total_amount).toFixed(2)}`, { supplier }, at]);
+    [rfqId, `${supplier} (${carrier}) bid ${Number(b[0].total_amount).toFixed(2)}`,
+      { supplier, carrier, total_amount: Number(b[0].total_amount) }, at]);
 }
 
 async function extension(c, rfqId, reason, prev, next, capped, at) {
