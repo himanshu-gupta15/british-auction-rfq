@@ -51,6 +51,14 @@ npm run dev                          # /api is proxied to localhost:4000
 
 Run unit tests: `cd backend-node && npm test`
 
+## Deploy (Render)
+In production a single Node service serves both the API (`/api/*`) and the built React app.
+- `npm run build` (repo root) installs both packages and builds `frontend/dist`
+- `npm start` starts Express. On boot it applies `db/schema.sql` (idempotent). With `SEED_DEMO=true` it also loads the demo auctions, but only when the database is empty.
+- Required env: `DATABASE_URL`. Optional: `DATABASE_SSL=true` (for an external DB URL), `SEED_DEMO`, `AUTO_MIGRATE=false`.
+
+[`render.yaml`](render.yaml) is a Blueprint that defines both the web service and the Postgres database.
+
 ## Try the extension logic
 1. Create an RFQ whose bid close is a few minutes away, with X = 10 and Y = 5. You're already inside the trigger window.
 2. Open it and submit quotes as different suppliers (for example "Acme Freight", then "Swift Movers" at a lower price).

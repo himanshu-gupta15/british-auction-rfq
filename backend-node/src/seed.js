@@ -37,7 +37,8 @@ async function extension(c, rfqId, reason, prev, next, capped, at) {
       { reason, previous_close_at: prev, new_close_at: next, capped_at_forced_close: capped }, at]);
 }
 
-(async () => {
+/** Replaces all data with the 5 demo auctions. */
+async function seedDemo() {
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
@@ -82,6 +83,13 @@ async function extension(c, rfqId, reason, prev, next, capped, at) {
     throw err;
   } finally {
     c.release();
-    await pool.end();
   }
-})().catch((e) => { console.error(e); process.exit(1); });
+}
+
+module.exports = { seedDemo };
+
+if (require.main === module) {
+  seedDemo()
+    .then(() => pool.end())
+    .catch((e) => { console.error(e); process.exit(1); });
+}

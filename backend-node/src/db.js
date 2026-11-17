@@ -10,6 +10,8 @@ types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10)));
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://rfq:rfq@localhost:5433/rfq_auction',
   max: 10,
+  // Set DATABASE_SSL=true when connecting to a hosted database over its external URL.
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
 });
 
 /** Run `fn(client)` inside a transaction. */
