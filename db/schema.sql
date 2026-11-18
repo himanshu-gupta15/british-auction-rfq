@@ -1,5 +1,5 @@
 -- British Auction RFQ System - PostgreSQL schema
--- Shared by both backends (Express & FastAPI).
+-- Applied automatically by the Express backend on startup.
 
 DO $$ BEGIN
   CREATE TYPE extension_trigger AS ENUM ('BID_RECEIVED', 'ANY_RANK_CHANGE', 'L1_RANK_CHANGE');
