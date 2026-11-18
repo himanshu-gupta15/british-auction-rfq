@@ -14,7 +14,6 @@ a forced close time that is never exceeded, live rankings (L1, L2, …), and an 
 
 ```
 ├── db/schema.sql              # tables, enums, constraints, ranking view
-├── docker-compose.yml         # PostgreSQL 16 on localhost:5433 (auto-applies schema)
 ├── docs/                      # HLD.md, SCHEMA.md
 ├── backend-node/
 │   ├── src/index.js           # Express app & routes
@@ -29,16 +28,15 @@ a forced close time that is never exceeded, live rankings (L1, L2, …), and an 
 
 ## Run locally
 
-Prerequisites: Node.js 18+, plus Docker **or** an existing PostgreSQL.
+Prerequisites: Node.js 18+ and PostgreSQL 13+.
 
 ```bash
 # 1. Database
-docker compose up -d                 # Postgres on localhost:5433, schema applied automatically
-#   (existing Postgres instead? create a DB, set DATABASE_URL in backend-node/.env, then: cd backend-node && npm run db:init)
+createdb rfq_auction                 # the schema is applied automatically when the backend starts
 
 # 2. Backend (http://localhost:4000)
 cd backend-node
-cp .env.example .env
+cp .env.example .env                 # set DATABASE_URL to your Postgres user/password
 npm install
 npm run seed                         # optional: 5 demo auctions (active/upcoming/closed/force-closed)
 npm start

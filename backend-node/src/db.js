@@ -8,7 +8,7 @@ types.setTypeParser(1700, (v) => (v === null ? null : parseFloat(v)));
 types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10)));
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://rfq:rfq@localhost:5433/rfq_auction',
+  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/rfq_auction',
   max: 10,
   // Set DATABASE_SSL=true when connecting to a hosted database over its external URL.
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
